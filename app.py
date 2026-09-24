@@ -15,7 +15,7 @@ from streamlit_drawable_canvas import st_canvas
 
 # ================= 1. 页面配置与初始化 =================
 st.set_page_config(
-    page_title="自行监测与采样人员现场点检自检平台",
+    page_title="自行监测与采样人员现场点检平台",
     layout="centered",
     initial_sidebar_state="expanded",
 )
@@ -44,7 +44,17 @@ if os.path.exists(excel_filename):
     sheet_names = xls.sheet_names
     for sheet in sheet_names:
       df = pd.read_excel(xls, sheet_name=sheet)
-      excel_data_dict[sheet] = df
+      items = []
+      for col in df.columns:
+        for val in df[col].dropna().astype(str):
+          val_clean = val.strip()
+          if (
+              len(val_clean) > 1
+              and val_clean not in items
+              and not val_clean.startswith("Unnamed")
+          ):
+            items.append(val_clean)
+      excel_data_dict[sheet] = items if items else [f"执行{sheet}相关标准点检"]
   except Exception as e:
     pass
 
@@ -57,6 +67,12 @@ if not sheet_names:
       "雨水",
       "噪声",
   ]
+  for s in sheet_names:
+    excel_data_dict[s] = [
+        f"【{s}】采样/监测仪器在检定有效期内且完成现场校准",
+        f"【{s}】现场作业人员按规范正确佩戴个人防护用品",
+        f"【{s}】点位设置、频次及方法严格执行国家标准及方案要求",
+    ]
 
 
 # ================= 3. 百度网盘自动上传函数（带 OAuth2 自动刷新） =================
@@ -161,11 +177,10 @@ with col_logo:
         width=110,
     )
 with col_title:
-  st.markdown("## 自行监测与采样人员现场点检自检平台")
+  st.markdown("## 自行监测与采样人员现场点检平台")
 
 st.markdown(
-    "本系统用于环境及职业卫生自行监测过程中，采样人员的现场操作点检与自检合规确认。各项检查要求已自动从后台 Excel"
-    " 对应 Sheet 中加载。"
+    "本系统用于环境及职业卫生自行监测过程中，采样人员的现场操作点检与自检合规确认。"
 )
 
 # 基础信息录入
@@ -178,9 +193,9 @@ with col2:
       "身份证号 / 工号 (必填)：", help="请输入18位身份证号或有效工号"
   )
 
-# 多选监测任务（对应 Excel 的各个 Sheet）
+# 多选监测任务
 selected_tasks = st.multiselect(
-    "监测任务/点位 (对应 Excel 附件 Sheet，可复选)：",
+    "监测任务/点位 (可复选)：",
     options=sheet_names,
     default=[sheet_names[0]] if sheet_names else [],
     help="勾选本次需要执行监测和点检的任务类型",
@@ -198,31 +213,31 @@ if any("噪声" in t for t in selected_tasks):
 st.write("---")
 st.markdown("### 📋 动态检查要求与点检确认")
 
-# 动态提取所选 Sheet 中的检查要求并生成勾选项
-dynamic_check_items = []
+# 根据所选任务动态聚合 Excel 中的检查要求
+current_dynamic_items = []
 for task in selected_tasks:
   if task in excel_data_dict:
-    df = excel_data_dict[task]
-    # 尝试寻找包含文本的列作为检查项
-    for col in df.columns:
-      for val in df[col].dropna().astype(str):
-        if len(val.strip()) > 3 and val.strip() not in dynamic_check_items:
-          dynamic_check_items.append(f"【{task}】{val.strip()}")
+    for req in excel_data_dict[task]:
+      formatted_req = f"【{task}】{req}"
+      if formatted_req not in current_dynamic_items:
+        current_dynamic_items.append(formatted_req)
 
-# 若 Excel 中未解析到具体文本，则使用标准的通用点检要求
-if not dynamic_check_items:
-  dynamic_check_items = [
-      "【通用点检】采样仪器设备在检定有效期内，且采样前已完成现场校准。",
-      "【通用点检】现场采样人员已按规范正确佩戴必要的劳动防护用品。",
-      "【通用点检】采样点位设置、频次及监测方法严格执行国家标准及方案要求。",
-      "【通用点检】样品采集后按规范进行标识、封装、冷藏或避光保存。",
-      "【通用点检】现场采样原始记录完整、真实、无涂改。",
+if not current_dynamic_items:
+  current_dynamic_items = [
+      "【通用要求】现场采样仪器在检定有效期内且完成现场校准",
+      "【通用要求】采样人员按规范正确佩戴个人防护用品",
   ]
 
-st.info("请根据现场实际核对以下具体要求并逐项勾选：")
+# 选择全部快捷勾选框
+select_all = st.checkbox("☑ 选择全部")
+
 user_checks = []
-for idx, req_text in enumerate(dynamic_check_items):
-  user_checks.append(st.checkbox(req_text, key=f"chk_req_{idx}"))
+st.info("请对照以下对应任务的 Excel 检查要求逐项核对：")
+for idx, req_text in enumerate(current_dynamic_items):
+  isChecked = st.checkbox(
+      req_text, value=select_all, key=f"chk_dyn_{idx}"
+  )
+  user_checks.append(isChecked)
 
 # ================= 6. 手写签名与手写日期栏（并排双画布） =================
 current_date_str = datetime.date.today().strftime("%Y年%m月%d日")
@@ -377,7 +392,7 @@ if st.button("📁 确认无误，一键提交点检自检表并生成合规档�
         sampling_person,
         employee_id,
         selected_tasks,
-        dynamic_check_items,
+        current_dynamic_items,
         user_checks,
         sig_io,
         date_io,
