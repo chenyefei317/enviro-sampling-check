@@ -33,22 +33,22 @@ hide_streamlit_style = """
     """
 st.markdown(hide_streamlit_style, unsafe_allow_html=True)
 
-
-# 加载 Excel 点检表数据与 Sheet 名称
+# ================= 2. 动态加载 Excel 点检表要求 =================
 excel_filename = "环境监测点检表 2026-06-15.xlsx"
 sheet_names = []
-excel_dfs = {}
+excel_data_dict = {}
 
 if os.path.exists(excel_filename):
   try:
     xls = pd.ExcelFile(excel_filename)
     sheet_names = xls.sheet_names
-    for s in sheet_names:
-      excel_dfs[s] = pd.read_excel(xls, sheet_name=s)
-  except Exception:
+    for sheet in sheet_names:
+      df = pd.read_excel(xls, sheet_name=sheet)
+      excel_data_dict[sheet] = df
+  except Exception as e:
     pass
 
-# 如果未找到 Excel，提供默认的标准 Sheet 列表
+# 若未找到 Excel，提供默认兜底选项
 if not sheet_names:
   sheet_names = [
       "VOC挥发性有机物（有组织废气）",
@@ -59,7 +59,7 @@ if not sheet_names:
   ]
 
 
-# ================= 2. 百度网盘自动上传函数（带 OAuth2 自动刷新） =================
+# ================= 3. 百度网盘自动上传函数（带 OAuth2 自动刷新） =================
 def refresh_baidu_access_token():
   try:
     client_id = st.secrets.get("BAIDU_CLIENT_ID", "")
@@ -111,7 +111,7 @@ def upload_to_baidu_netdisk_with_auto_refresh(file_bytes, remote_filename):
     return False, f"网盘上传失败: {result.get('error_msg', '未知错误')}"
 
 
-# ================= 3. 侧边栏：Logo与微信分享 =================
+# ================= 4. 侧边栏：Logo与微信分享 =================
 with st.sidebar:
   try:
     st.image("logo.png", width=160)
@@ -140,7 +140,7 @@ with st.sidebar:
     )
 
   st.markdown("---")
-  st.markdown("### 📥 Excel 点检表模板下载")
+  st.markdown("### 📥 原始点检表模板下载")
   if os.path.exists(excel_filename):
     with open(excel_filename, "rb") as fe:
       st.download_button(
@@ -150,7 +150,7 @@ with st.sidebar:
           use_container_width=True,
       )
 
-# ================= 4. 主界面逻辑 =================
+# ================= 5. 主界面逻辑 =================
 col_logo, col_title = st.columns([1, 6])
 with col_logo:
   try:
@@ -164,8 +164,8 @@ with col_title:
   st.markdown("## 自行监测与采样人员现场点检自检平台")
 
 st.markdown(
-    "本系统用于环境及职业卫生自行监测过程中，采样人员的现场操作点检与自检合规确认。监测任务点位直接对应后台 Excel"
-    " 文件的各个 Sheet。"
+    "本系统用于环境及职业卫生自行监测过程中，采样人员的现场操作点检与自检合规确认。各项检查要求已自动从后台 Excel"
+    " 对应 Sheet 中加载。"
 )
 
 # 基础信息录入
@@ -180,13 +180,13 @@ with col2:
 
 # 多选监测任务（对应 Excel 的各个 Sheet）
 selected_tasks = st.multiselect(
-    "监测任务/点位 (对应附件 Sheet，可复选)：",
+    "监测任务/点位 (对应 Excel 附件 Sheet，可复选)：",
     options=sheet_names,
     default=[sheet_names[0]] if sheet_names else [],
     help="勾选本次需要执行监测和点检的任务类型",
 )
 
-# 如果选了噪声，展示噪声监测国家标准提示
+# 若选择了噪声，特别展示国家标准指引
 if any("噪声" in t for t in selected_tasks):
   with st.expander("🔊 【合规指引】噪声监测国家标准参考", expanded=True):
     st.info("""
@@ -196,28 +196,35 @@ if any("噪声" in t for t in selected_tasks):
         """)
 
 st.write("---")
-st.markdown("### 📋 现场点检项目核对")
+st.markdown("### 📋 动态检查要求与点检确认")
 
-# 动态渲染点检项目（优先从对应 Sheet 读取，若无则使用标准通用点检项）
-checklist_items = [
-    "【仪器校准】采样/检测仪器在检定有效期内，且采样前已完成现场校准（如零点校准、流量校准或声级计校准）。",
-    "【个体防护】现场作业人员已按规范正确佩戴劳动防护用品（防尘口罩、防护眼镜、绝缘鞋、噪声作业耳塞等）。",
-    "【标准符合】采样点位、频次及监测方法严格执行国家环保标准及自行监测方案要求。",
-    "【样品管理】样品采集后按规范进行标识、封装、冷藏或避光保存，并严格执行空白样与平行样采集。",
-    "【原始记录】现场采样原始记录填写完整、真实、清晰，环境参数（温湿度、压差、风速等）记录齐全无涂改。",
-]
+# 动态提取所选 Sheet 中的检查要求并生成勾选项
+dynamic_check_items = []
+for task in selected_tasks:
+  if task in excel_data_dict:
+    df = excel_data_dict[task]
+    # 尝试寻找包含文本的列作为检查项
+    for col in df.columns:
+      for val in df[col].dropna().astype(str):
+        if len(val.strip()) > 3 and val.strip() not in dynamic_check_items:
+          dynamic_check_items.append(f"【{task}】{val.strip()}")
 
-# 如果用户选择了某个特定 Sheet，并且该 Sheet 中有内容，可以展示提示
-if selected_tasks:
-  st.info(
-      f"当前已选择点检任务：【{'、'.join(selected_tasks)}】。请结合现场实际逐项核对："
-  )
+# 若 Excel 中未解析到具体文本，则使用标准的通用点检要求
+if not dynamic_check_items:
+  dynamic_check_items = [
+      "【通用点检】采样仪器设备在检定有效期内，且采样前已完成现场校准。",
+      "【通用点检】现场采样人员已按规范正确佩戴必要的劳动防护用品。",
+      "【通用点检】采样点位设置、频次及监测方法严格执行国家标准及方案要求。",
+      "【通用点检】样品采集后按规范进行标识、封装、冷藏或避光保存。",
+      "【通用点检】现场采样原始记录完整、真实、无涂改。",
+  ]
 
-c_items = []
-for idx, item in enumerate(checklist_items):
-  c_items.append(st.checkbox(item, key=f"chk_{idx}"))
+st.info("请根据现场实际核对以下具体要求并逐项勾选：")
+user_checks = []
+for idx, req_text in enumerate(dynamic_check_items):
+  user_checks.append(st.checkbox(req_text, key=f"chk_req_{idx}"))
 
-# ================= 5. 手写签名与手写日期栏（并排双画布） =================
+# ================= 6. 手写签名与手写日期栏（并排双画布） =================
 current_date_str = datetime.date.today().strftime("%Y年%m月%d日")
 
 st.write("---")
@@ -254,11 +261,12 @@ with col_date:
   )
 
 
-# ================= 6. 辅助函数：生成 Word 点检自检表 =================
+# ================= 7. 辅助函数：生成 Word 点检自检表 =================
 def generate_self_monitoring_docx(
     person,
     emp_id,
     tasks,
+    items,
     checks,
     sig_image_io,
     date_image_io,
@@ -275,17 +283,21 @@ def generate_self_monitoring_docx(
       r.font.element.rPr.rFonts.set(qn("w:eastAsia"), "华文宋体")
 
   tasks_str = "、".join(tasks) if tasks else "未选择"
+
+  check_details = "\n".join(
+      [
+          f"• {items[i]}: {'[符合]' if checks[i] else '[未勾选]'}"
+          for i in range(len(items))
+      ]
+  )
+
   p_info = doc.add_paragraph()
   run_i = p_info.add_run(
       f"采样人员: {person}    工号/身份证: {emp_id}\n"
       f"监测任务/点位: {tasks_str}\n"
       f"填报时间: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
       "--------------------------------------------------\n"
-      f"1. 仪器校准核查: {'[符合]' if checks[0] else '[未勾选]'}\n"
-      f"2. 个体防护佩戴: {'[符合]' if checks[1] else '[未勾选]'}\n"
-      f"3. 监测标准符合: {'[符合]' if checks[2] else '[未勾选]'}\n"
-      f"4. 样品管理规范: {'[符合]' if checks[3] else '[未勾选]'}\n"
-      f"5. 原始记录真实: {'[符合]' if checks[4] else '[未勾选]'}\n"
+      f"【现场检查要求落实情况】\n{check_details}\n\n"
       "本人承诺以上现场点检项目真实有效，严格遵循环保及IWAY合规标准。"
   )
   run_i.font.name = "华文宋体"
@@ -325,7 +337,7 @@ def generate_self_monitoring_docx(
   return buffer
 
 
-# ================= 7. 提交校验与生成档案 =================
+# ================= 8. 提交校验与生成档案 =================
 if st.button("📁 确认无误，一键提交点检自检表并生成合规档案", use_container_width=True):
   is_canvas_empty = canvas_result.image_data is None or (
       canvas_result.json_data is not None
@@ -338,7 +350,7 @@ if st.button("📁 确认无误，一键提交点检自检表并生成合规档�
 
   if not sampling_person.strip() or not employee_id.strip() or not selected_tasks:
     st.error("❌ 拦截：请完整填写【采样人员姓名】、【工号/身份证】并【至少勾选一项监测任务】！")
-  elif not all(c_items):
+  elif not all(user_checks):
     st.warning("⚠️ 拦截：为保障监测数据真实有效，必须将上方所有现场点检项全部勾选确认！")
   elif is_canvas_empty:
     st.warning("⚠️ 拦截：请在左侧画板完成手写签名后再提交。")
@@ -365,7 +377,8 @@ if st.button("📁 确认无误，一键提交点检自检表并生成合规档�
         sampling_person,
         employee_id,
         selected_tasks,
-        c_items,
+        dynamic_check_items,
+        user_checks,
         sig_io,
         date_io,
     )
@@ -418,7 +431,7 @@ if st.button("📁 确认无误，一键提交点检自检表并生成合规档�
 
     st.snow()
 
-# ================= 8. 底部版权与开发者声明 =================
+# ================= 9. 底部版权与开发者声明 =================
 st.markdown("---")
 st.markdown(
     "<div style='text-align: center; color: gray; font-size: 14px;'>"
