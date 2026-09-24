@@ -195,7 +195,9 @@ with col2:
 
 # 中文“选择全部”控制多选任务
 select_all_tasks = st.checkbox("☑ 选择全部监测任务")
-default_selected = sheet_names if select_all_tasks else ([sheet_names[0]] if sheet_names else [])
+default_selected = (
+    sheet_names if select_all_tasks else ([sheet_names[0]] if sheet_names else [])
+)
 
 selected_tasks = st.multiselect(
     "监测任务/点位 (可复选)：",
@@ -221,12 +223,11 @@ current_dynamic_items = []
 for task in selected_tasks:
   if task in excel_data_dict:
     for req in excel_data_dict[task]:
-      # 智能防重：如果 req 本身已经包含了 task 名字，直接用；否则加上前缀
       if task in req:
         formatted_req = f"【{req}】" if not req.startswith("【") else req
       else:
         formatted_req = f"【{task}】{req}"
-      
+
       if formatted_req not in current_dynamic_items:
         current_dynamic_items.append(formatted_req)
 
@@ -236,15 +237,28 @@ if not current_dynamic_items:
       "【通用要求】采样人员按规范正确佩戴个人防护用品",
   ]
 
-# 检查项的“选择全部”快捷勾选框
-select_all_checks = st.checkbox("☑ 选择全部检查项")
+
+# 稳健的“选择全部检查项”状态管理逻辑
+def toggle_all_checks():
+  target_state = st.session_state.get("select_all_checks_toggle", False)
+  for i in range(len(current_dynamic_items)):
+    st.session_state[f"chk_dyn_{i}"] = target_state
+
+
+st.checkbox(
+    "☑ 选择全部检查项",
+    key="select_all_checks_toggle",
+    on_change=toggle_all_checks,
+)
 
 user_checks = []
 st.info("请对照以下对应任务的 Excel 检查要求逐项核对：")
 for idx, req_text in enumerate(current_dynamic_items):
-  isChecked = st.checkbox(
-      req_text, value=select_all_checks, key=f"chk_dyn_{idx}"
-  )
+  # 初始化每个复选框的 Session State
+  if f"chk_dyn_{idx}" not in st.session_state:
+    st.session_state[f"chk_dyn_{idx}"] = False
+
+  isChecked = st.checkbox(req_text, key=f"chk_dyn_{idx}")
   user_checks.append(isChecked)
 
 # ================= 6. 手写签名与手写日期栏（并排双画布） =================
