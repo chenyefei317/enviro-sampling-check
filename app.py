@@ -34,14 +34,29 @@ hide_streamlit_style = """
 st.markdown(hide_streamlit_style, unsafe_allow_html=True)
 
 
-# 智能模糊查找 Word 模板函数
-def find_docx_file(folder, keyword):
-  if not os.path.exists(folder):
-    return None
-  for filename in os.listdir(folder):
-    if keyword in filename and filename.lower().endswith(".docx"):
-      return os.path.join(folder, filename)
-  return None
+# 加载 Excel 点检表数据与 Sheet 名称
+excel_filename = "环境监测点检表 2026-06-15.xlsx"
+sheet_names = []
+excel_dfs = {}
+
+if os.path.exists(excel_filename):
+  try:
+    xls = pd.ExcelFile(excel_filename)
+    sheet_names = xls.sheet_names
+    for s in sheet_names:
+      excel_dfs[s] = pd.read_excel(xls, sheet_name=s)
+  except Exception:
+    pass
+
+# 如果未找到 Excel，提供默认的标准 Sheet 列表
+if not sheet_names:
+  sheet_names = [
+      "VOC挥发性有机物（有组织废气）",
+      "颗粒物（有组织废气）",
+      "生活污水",
+      "雨水",
+      "噪声",
+  ]
 
 
 # ================= 2. 百度网盘自动上传函数（带 OAuth2 自动刷新） =================
@@ -110,7 +125,7 @@ with st.sidebar:
   st.write("已自动关联您的云端网址，二维码将实时更新供手机扫码填报。")
 
   app_url = st.text_input(
-      "应用公网链接 (URL)", value="https://occupational-check-sign.streamlit.app"
+      "应用公网链接 (URL)", value="https://enviro-sampling-check.streamlit.app/"
   )
 
   if app_url:
@@ -123,6 +138,17 @@ with st.sidebar:
     st.info(
         "💡 **提示**：将上方链接复制并发送至工作群，采样人员即可手机端随时完成现场自检与点报。"
     )
+
+  st.markdown("---")
+  st.markdown("### 📥 Excel 点检表模板下载")
+  if os.path.exists(excel_filename):
+    with open(excel_filename, "rb") as fe:
+      st.download_button(
+          label="📄 下载环境监测点检表.xlsx",
+          data=fe.read(),
+          file_name=excel_filename,
+          use_container_width=True,
+      )
 
 # ================= 4. 主界面逻辑 =================
 col_logo, col_title = st.columns([1, 6])
@@ -138,43 +164,58 @@ with col_title:
   st.markdown("## 自行监测与采样人员现场点检自检平台")
 
 st.markdown(
-    "本系统用于环境及职业卫生自行监测过程中，采样人员的现场操作点检与自检合规确认。请如实逐项核对，并在底部完成手写签收。"
+    "本系统用于环境及职业卫生自行监测过程中，采样人员的现场操作点检与自检合规确认。监测任务点位直接对应后台 Excel"
+    " 文件的各个 Sheet。"
 )
 
 # 基础信息录入
 st.subheader("1. 采样人员与任务基本信息")
-col1, col2, col3 = st.columns(3)
+col1, col2 = st.columns(2)
 with col1:
   sampling_person = st.text_input("采样人员姓名 (必填)：")
 with col2:
   employee_id = st.text_input(
       "身份证号 / 工号 (必填)：", help="请输入18位身份证号或有效工号"
   )
-with col3:
-  monitoring_task = st.text_input(
-      "监测任务/点位 (必填)：", placeholder="例如：废气/废水/厂界噪声监测"
-  )
+
+# 多选监测任务（对应 Excel 的各个 Sheet）
+selected_tasks = st.multiselect(
+    "监测任务/点位 (对应附件 Sheet，可复选)：",
+    options=sheet_names,
+    default=[sheet_names[0]] if sheet_names else [],
+    help="勾选本次需要执行监测和点检的任务类型",
+)
+
+# 如果选了噪声，展示噪声监测国家标准提示
+if any("噪声" in t for t in selected_tasks):
+  with st.expander("🔊 【合规指引】噪声监测国家标准参考", expanded=True):
+    st.info("""
+        * **标准依据**：执行《工业企业厂界环境噪声排放标准》（**GB 12348-2008**）及《声环境质量标准》（**GB 3096-2008**）。
+        * **测点要求**：厂界噪声测点应选择在工业企业厂界经受噪声影响最具代表性的位置，传声器应加防风罩，避开强磁场和振动干扰。
+        * **气象条件**：测量应在无雨、无雪、风速小于 5m/s 的气象条件下进行。
+        """)
 
 st.write("---")
-st.markdown("### 📋 自行监测现场点检核对表（IWAY合规标准）")
+st.markdown("### 📋 现场点检项目核对")
 
-st.info("请对照现场实际工作情况，逐项勾选确认：")
+# 动态渲染点检项目（优先从对应 Sheet 读取，若无则使用标准通用点检项）
+checklist_items = [
+    "【仪器校准】采样/检测仪器在检定有效期内，且采样前已完成现场校准（如零点校准、流量校准或声级计校准）。",
+    "【个体防护】现场作业人员已按规范正确佩戴劳动防护用品（防尘口罩、防护眼镜、绝缘鞋、噪声作业耳塞等）。",
+    "【标准符合】采样点位、频次及监测方法严格执行国家环保标准及自行监测方案要求。",
+    "【样品管理】样品采集后按规范进行标识、封装、冷藏或避光保存，并严格执行空白样与平行样采集。",
+    "【原始记录】现场采样原始记录填写完整、真实、清晰，环境参数（温湿度、压差、风速等）记录齐全无涂改。",
+]
 
-c1 = st.checkbox(
-    "【仪器校准】采样仪器（如烟尘气测定仪、噪声仪、水质采水器等）在检定有效期内，且采样前已完成现场校准（零点/流量校准）。"
-)
-c2 = st.checkbox(
-    "【个体防护】现场采样人员已按规范正确佩戴劳动防护用品（如安全帽、防护眼镜、防毒面罩、绝缘鞋等）。"
-)
-c3 = st.checkbox(
-    "【方案符合】采样点位设置、采样频次及采样时间严格遵循监测方案及标准方法要求，无擅自更改。"
-)
-c4 = st.checkbox(
-    "【样品保存】样品采集后已规范进行标识、封装、冷藏/避光保存，并严格执行现场空白与平行样采集要求。"
-)
-c5 = st.checkbox(
-    "【原始记录】现场采样原始记录表填写完整、真实、清晰，各项环境参数（温度、压差等）记录齐全无涂改。"
-)
+# 如果用户选择了某个特定 Sheet，并且该 Sheet 中有内容，可以展示提示
+if selected_tasks:
+  st.info(
+      f"当前已选择点检任务：【{'、'.join(selected_tasks)}】。请结合现场实际逐项核对："
+  )
+
+c_items = []
+for idx, item in enumerate(checklist_items):
+  c_items.append(st.checkbox(item, key=f"chk_{idx}"))
 
 # ================= 5. 手写签名与手写日期栏（并排双画布） =================
 current_date_str = datetime.date.today().strftime("%Y年%m月%d日")
@@ -217,44 +258,33 @@ with col_date:
 def generate_self_monitoring_docx(
     person,
     emp_id,
-    task_name,
+    tasks,
     checks,
     sig_image_io,
     date_image_io,
 ):
-  # 优先尝试读取 attachments 文件夹中的点检表模板
-  template_path = find_docx_file("attachments", "点检表")
-  if not template_path:
-    template_path = find_docx_file("attachments", "自检表")
+  doc = Document()
+  p_title = doc.add_paragraph()
+  r_t = p_title.add_run("【自行监测与采样人员现场点检自检确认表】")
+  r_t.bold = True
+  r_t.font.size = Pt(16)
 
-  if template_path and os.path.exists(template_path):
-    try:
-      doc = Document(template_path)
-    except Exception:
-      doc = Document()
-  else:
-    doc = Document()
-    p_title = doc.add_paragraph()
-    r_t = p_title.add_run("【自行监测与采样人员现场点检自检确认表】")
-    r_t.bold = True
-    r_t.font.size = Pt(16)
-
-  # 统一字体样式
   for p in doc.paragraphs:
     for r in p.runs:
       r.font.name = "华文宋体"
       r.font.element.rPr.rFonts.set(qn("w:eastAsia"), "华文宋体")
 
+  tasks_str = "、".join(tasks) if tasks else "未选择"
   p_info = doc.add_paragraph()
   run_i = p_info.add_run(
-      f"采样人员: {person}    编号/身份证: {emp_id}\n"
-      f"监测任务/点位: {task_name}\n"
+      f"采样人员: {person}    工号/身份证: {emp_id}\n"
+      f"监测任务/点位: {tasks_str}\n"
       f"填报时间: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
       "--------------------------------------------------\n"
       f"1. 仪器校准核查: {'[符合]' if checks[0] else '[未勾选]'}\n"
       f"2. 个体防护佩戴: {'[符合]' if checks[1] else '[未勾选]'}\n"
-      f"3. 监测方案符合: {'[符合]' if checks[2] else '[未勾选]'}\n"
-      f"4. 样品保存规范: {'[符合]' if checks[3] else '[未勾选]'}\n"
+      f"3. 监测标准符合: {'[符合]' if checks[2] else '[未勾选]'}\n"
+      f"4. 样品管理规范: {'[符合]' if checks[3] else '[未勾选]'}\n"
       f"5. 原始记录真实: {'[符合]' if checks[4] else '[未勾选]'}\n"
       "本人承诺以上现场点检项目真实有效，严格遵循环保及IWAY合规标准。"
   )
@@ -306,9 +336,9 @@ if st.button("📁 确认无误，一键提交点检自检表并生成合规档�
       and len(canvas_date_result.json_data.get("objects", [])) == 0
   )
 
-  if not sampling_person.strip() or not employee_id.strip() or not monitoring_task.strip():
-    st.error("❌ 拦截：请完整填写【采样人员姓名】、【工号/身份证】与【监测任务】！")
-  elif not (c1 and c2 and c3 and c4 and c5):
+  if not sampling_person.strip() or not employee_id.strip() or not selected_tasks:
+    st.error("❌ 拦截：请完整填写【采样人员姓名】、【工号/身份证】并【至少勾选一项监测任务】！")
+  elif not all(c_items):
     st.warning("⚠️ 拦截：为保障监测数据真实有效，必须将上方所有现场点检项全部勾选确认！")
   elif is_canvas_empty:
     st.warning("⚠️ 拦截：请在左侧画板完成手写签名后再提交。")
@@ -331,19 +361,19 @@ if st.button("📁 确认无误，一键提交点检自检表并生成合规档�
     date_img.save(date_io, format="PNG")
     date_io.seek(0)
 
-    checks_status = [c1, c2, c3, c4, c5]
     receipt_docx_buffer = generate_self_monitoring_docx(
         sampling_person,
         employee_id,
-        monitoring_task,
-        checks_status,
+        selected_tasks,
+        c_items,
         sig_io,
         date_io,
     )
 
     zip_buffer = io.BytesIO()
     with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
-      receipt_filename = f"自行监测点检表_{sampling_person}_{monitoring_task}.docx"
+      task_summary = "_".join(selected_tasks)[:15]
+      receipt_filename = f"自行监测点检表_{sampling_person}_{task_summary}.docx"
       zip_file.writestr(receipt_filename, receipt_docx_buffer.getvalue())
 
       # 自动同步到百度网盘
