@@ -69,9 +69,9 @@ if not sheet_names:
   ]
   for s in sheet_names:
     excel_data_dict[s] = [
-        f"【{s}】采样/监测仪器在检定有效期内且完成现场校准",
-        f"【{s}】现场作业人员按规范正确佩戴个人防护用品",
-        f"【{s}】点位设置、频次及方法严格执行国家标准及方案要求",
+        f"采样/监测仪器在检定有效期内且完成现场校准",
+        f"现场作业人员按规范正确佩戴个人防护用品",
+        f"点位设置、频次及方法严格执行国家标准及方案要求",
     ]
 
 
@@ -193,11 +193,14 @@ with col2:
       "身份证号 / 工号 (必填)：", help="请输入18位身份证号或有效工号"
   )
 
-# 多选监测任务
+# 中文“选择全部”控制多选任务
+select_all_tasks = st.checkbox("☑ 选择全部监测任务")
+default_selected = sheet_names if select_all_tasks else ([sheet_names[0]] if sheet_names else [])
+
 selected_tasks = st.multiselect(
     "监测任务/点位 (可复选)：",
     options=sheet_names,
-    default=[sheet_names[0]] if sheet_names else [],
+    default=default_selected,
     help="勾选本次需要执行监测和点检的任务类型",
 )
 
@@ -213,12 +216,17 @@ if any("噪声" in t for t in selected_tasks):
 st.write("---")
 st.markdown("### 📋 动态检查要求与点检确认")
 
-# 根据所选任务动态聚合 Excel 中的检查要求
+# 根据所选任务动态聚合 Excel 中的检查要求，避免名称重复
 current_dynamic_items = []
 for task in selected_tasks:
   if task in excel_data_dict:
     for req in excel_data_dict[task]:
-      formatted_req = f"【{task}】{req}"
+      # 智能防重：如果 req 本身已经包含了 task 名字，直接用；否则加上前缀
+      if task in req:
+        formatted_req = f"【{req}】" if not req.startswith("【") else req
+      else:
+        formatted_req = f"【{task}】{req}"
+      
       if formatted_req not in current_dynamic_items:
         current_dynamic_items.append(formatted_req)
 
@@ -228,14 +236,14 @@ if not current_dynamic_items:
       "【通用要求】采样人员按规范正确佩戴个人防护用品",
   ]
 
-# 选择全部快捷勾选框
-select_all = st.checkbox("☑ 选择全部")
+# 检查项的“选择全部”快捷勾选框
+select_all_checks = st.checkbox("☑ 选择全部检查项")
 
 user_checks = []
 st.info("请对照以下对应任务的 Excel 检查要求逐项核对：")
 for idx, req_text in enumerate(current_dynamic_items):
   isChecked = st.checkbox(
-      req_text, value=select_all, key=f"chk_dyn_{idx}"
+      req_text, value=select_all_checks, key=f"chk_dyn_{idx}"
   )
   user_checks.append(isChecked)
 
